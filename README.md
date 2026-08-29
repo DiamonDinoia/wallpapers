@@ -66,4 +66,5 @@ script (papersizes, palette, seeds); tweak and re-run.
 
 ## License
 
-CC0 1.0, public domain. See [LICENSE](LICENSE).
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Use them anywhere,
+including commercially, with attribution. See [LICENSE](LICENSE).
