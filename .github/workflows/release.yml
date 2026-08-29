@@ -1,0 +1,52 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install inkscape
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends inkscape
+      - name: Install python packages
+        run: pip install numpy scipy matplotlib pillow
+      - name: Render every plate
+        run: python gen_wallpapers.py
+      - name: Check the render is complete
+        run: |
+          python - <<'EOF'
+          import gen_wallpapers as g
+          missing = [n for n in g.NAMES
+                     if not (g.OUT / f"{n}.png").exists()
+                     or not (g.OUT / "thumbs" / f"{n}-thumb.png").exists()]
+          assert not missing, missing
+          print(len(g.NAMES), "plates and thumbnails")
+          EOF
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest --title "4K wallpapers" --target "$GITHUB_SHA" --notes \
+            "Thirteen 3840x2160 PNG plates, their 960x540 thumbnails, and the SVG sources
+          for the line-art plates. Rendered by \`gen_wallpapers.py\` at ${GITHUB_SHA:0:7}.
+
+          The README gallery links here, so this release is replaced on every push to main." \
+            *.png thumbs/*.png *.svg
