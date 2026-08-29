@@ -4,6 +4,7 @@ Generative math and physics wallpapers (3840×2160), procedurally generated with
 numpy and rendered as SVG (line art) or PNG (fields), with LaTeX-style equations
 typeset in Computer Modern.
 
+Browse them at [diamondinoia.com/wallpapers](https://diamondinoia.com/wallpapers/).
 Full-resolution PNGs and SVG sources are attached to the
 [latest release](https://github.com/DiamonDinoia/wallpapers/releases/latest);
 the git repository carries text only: the generator, this README, LICENSE.
