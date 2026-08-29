@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: release
@@ -39,6 +41,13 @@ jobs:
           assert not missing, missing
           print(len(g.NAMES), "plates and thumbnails")
           EOF
+      - name: Collect the gallery
+        run: |
+          mkdir site
+          cp index.html site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,3 +59,13 @@ jobs:
 
           The README gallery links here, so this release is replaced on every push to main." \
             *.png thumbs/*.png *.svg
+
+  pages:
+    needs: render
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
