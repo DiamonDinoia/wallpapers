@@ -2,3 +2,4 @@
 *.svg
 previews/
 __pycache__/
+index.html
