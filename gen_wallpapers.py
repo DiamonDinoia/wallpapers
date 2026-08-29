@@ -304,10 +304,11 @@ EQ_PAD = 48  # clear space demanded around a caption set inside the artwork
 BG_LUM = 13.8  # luminance of BG; a window this flat carries no artwork
 
 
-def caption(lines: list[str], color: str, max_w: int) -> list[Image.Image]:
+def caption(lines: list[str], color: str, max_w: int,
+            scale: float = EQ_SCALE) -> list[Image.Image]:
     """Set each equation line in Computer Modern, one tight-cropped figure per line.
 
-    Type size is fixed by EQ_SCALE, so every plate carries the same caption weight.
+    Type size is fixed by scale, so every plate carries the same caption weight.
     """
     import io
 
@@ -322,7 +323,7 @@ def caption(lines: list[str], color: str, max_w: int) -> list[Image.Image]:
         buf.seek(0)
         rows.append(Image.open(buf).convert("RGBA"))
 
-    sc = min(EQ_SCALE, 0.92 * max_w / max(r.width for r in rows))
+    sc = min(scale, 0.92 * max_w / max(r.width for r in rows))
     rows = [r.resize((max(1, int(r.width * sc)), max(1, int(r.height * sc))),
                      Image.LANCZOS) for r in rows]
     return rows
@@ -344,6 +345,12 @@ def stack(rows: list[Image.Image], align: str) -> Image.Image:
     return eq
 
 
+CREDIT = r"$\mathrm{\copyright\ 2026\ DiamonDinoia}$"  # set in Computer Modern, like the equations
+CREDIT_LICENSE = r"$\mathrm{CC\ BY\ 4.0}$"  # subordinate to the name, on its own line
+CREDIT_LICENSE_SCALE = 0.62  # of the credit type size
+CREDIT_SCALE = 0.75  # of the caption type size
+CREDIT_COLOR = "#54677e"
+CREDIT_ALPHA = 0.8
 CORNERS = ("bottom-right", "bottom-left", "top-right", "top-left")
 INK_BLOCK = 8  # ink is max-pooled onto this grid before the window search
 
@@ -432,6 +439,36 @@ def empty_window(art: Image.Image, w: int, h: int) -> tuple[int, int] | None:
     return j * b + (cw * b - w) // 2, i * b + (ch * b - h) // 2
 
 
+def sign(art: Image.Image, taken: tuple[int, int, int, int]) -> str:
+    """Set the credit in the corner with the least ink that the caption does not hold.
+
+    Overlap costs more than any amount of artwork, so the signature always yields the
+    corner to the equation. Returns the corner it took.
+    """
+    sc = EQ_SCALE * CREDIT_SCALE
+    name = caption([CREDIT], CREDIT_COLOR, W, scale=sc)[0]
+    lic = caption([CREDIT_LICENSE], CREDIT_COLOR, W, scale=sc * CREDIT_LICENSE_SCALE)[0]
+    w, h = max(name.width, lic.width), name.height + 14 + lic.height
+    lum = np.asarray(art.convert("RGB"), dtype=np.float32) @ np.array(
+        [0.2126, 0.7152, 0.0722], dtype=np.float32
+    )
+    at, xy, best = None, None, None
+    for anchor in CORNERS:
+        x, y = anchor_xy(anchor, w, h)
+        win = lum[y - EQ_PAD:y + h + EQ_PAD, x - EQ_PAD:x + w + EQ_PAD]
+        hit = not (x + w < taken[0] or x > taken[2] or y + h < taken[1] or y > taken[3])
+        score = (win > BG_LUM + 8).mean() + 10.0 * hit
+        if best is None or score < best:
+            at, xy, best = anchor, (x, y), score
+    sig = Image.new("RGBA", (w, h), (0, 0, 0, 0))  # the license hangs off the same edge
+    off = (lambda im: 0) if at.endswith("left") else (lambda im: w - im.width)
+    sig.paste(name, (off(name), 0))
+    sig.paste(lic, (off(lic), name.height + 14))
+    art.paste(sig.convert("RGB"), xy,
+              sig.getchannel("A").point(lambda v: int(v * CREDIT_ALPHA)))
+    return at
+
+
 def overlay_eq(name: str, lines: list[str], anchor: str | None = None,
                color: str = "#9db3cd", alpha: float = 0.92) -> Path:
     """Set the equation inside an empty corner of the artwork, or frame the artwork below it.
@@ -457,8 +494,9 @@ def overlay_eq(name: str, lines: list[str], anchor: str | None = None,
     if xy is not None:
         art.paste(eq.convert("RGB"), xy,
                   eq.getchannel("A").point(lambda v: int(v * alpha)))
+        sg = sign(art, (xy[0], xy[1], xy[0] + eq.width, xy[1] + eq.height))
         art.save(p)
-        print(f"inset {p} {at} at {xy}")
+        print(f"inset {p} {at} at {xy}, signed {sg}")
         return p
 
     band = eq.height + PLATE_MARGIN + 64  # gap to the plate, then an even bottom mat
@@ -472,6 +510,7 @@ def overlay_eq(name: str, lines: list[str], anchor: str | None = None,
     canvas.paste(eq.convert("RGB"),
                  (PLATE_MARGIN + plate_w - eq.width, H - PLATE_MARGIN - eq.height),
                  eq.getchannel("A").point(lambda v: int(v * alpha)))
+    sign(canvas, (PLATE_MARGIN + plate_w - eq.width, H - PLATE_MARGIN - eq.height, W, H))
     canvas.save(p)
     print(f"framed {p} (plate {plate_w}x{plate_h}, band {band})")
     return p
@@ -794,6 +833,9 @@ def selfcheck() -> None:
         ink = lambda x: (lum[y - EQ_PAD:y + h + EQ_PAD,
                              x - EQ_PAD:x + w + EQ_PAD] > BG_LUM + 8).sum()
         assert ink(band_x(art, y, w, h)) < ink((W - w) // 2) / 10, "band_x found no emptier x"
+    blank = Image.new("RGB", (W, H), BG)  # the credit yields its corner to the caption
+    assert sign(blank.copy(), (0, 0, 1, 1)) == "bottom-right"
+    assert sign(blank.copy(), (W - 900, H - 400, W, H)) != "bottom-right"
     src = RAW / f"{NAMES[0]}.png"
     if src.exists():  # framing reads raw/ and writes here, so a second pass is a no-op
         (RAW / "_check.png").write_bytes(src.read_bytes())

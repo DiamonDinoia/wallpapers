@@ -61,10 +61,15 @@ for `spread`, 1.4% against 52.4% for `talbot`, whose carpet leaves no window
 clear anywhere. Placement always reads `raw/` and writes the top level, so
 re-running it is a no-op.
 
+Every plate is signed in the same Computer Modern, in whichever corner holds the
+least artwork and is not already taken by the equation: the name, then the
+licence under it at 0.62 of its type size.
+
 Everything regenerates deterministically from constants at the top of the
 script (papersizes, palette, seeds); tweak and re-run.
 
 ## License
 
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Use them anywhere,
-including commercially, with attribution. See [LICENSE](LICENSE).
+including commercially, keeping the credit each plate carries. See
+[LICENSE](LICENSE).
