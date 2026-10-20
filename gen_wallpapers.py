@@ -711,7 +711,7 @@ def gammaplane() -> Path:
 
 def littlewood(deg: int = 20, chunk: int = 16384) -> Path:
     """Roots of every Littlewood polynomial sum_k a_k z^k, a_k = +-1, of degree 20."""
-    lim = frame(1.75)
+    lim = frame(2.75)  # |Im z| < 1.42 for every root; 2.75 keeps the ring inside the mat
     nx, ny = W, H
     dens = np.zeros((ny, nx), dtype=np.float32)
     n_poly = 1 << deg
@@ -887,8 +887,9 @@ def apply_overlays_numerics() -> None:
     )
     overlay_eq(
         "littlewood",
-        [r"$\{z \ : \ \sum_{k=0}^{20} a_k z^k = 0, \ \ a_k = \pm 1, \ a_{20} = 1\}$",
-         r"$2^{20}\ \mathrm{polynomials}, \ 2.1 \times 10^{7}\ \mathrm{roots}$"],
+        [r"$\{z \ : \ \sum_{k=0}^{20} a_k z^k = 0\}$", r"$a_k = \pm 1, \ a_{20} = 1$",
+         r"$2^{20}\ \mathrm{polynomials}$", r"$2.1 \times 10^{7}\ \mathrm{roots}$"],
+        anchor="middle-center",  # the unit-disc hole holds the caption
     )
     overlay_eq(
         "helmholtz",
