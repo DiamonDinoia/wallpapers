@@ -18,6 +18,8 @@ jobs:
   render:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    outputs:
+      names: ${{ steps.names.outputs.names }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,6 +43,14 @@ jobs:
           assert not missing, missing
           print(len(g.NAMES), "plates and thumbnails")
           EOF
+      - id: names
+        run: python -c "import json, gen_wallpapers as g; print('names=' + json.dumps(g.NAMES))" >> "$GITHUB_OUTPUT"
+      # gen_videos.py composites its overlays on these plates
+      - uses: actions/upload-artifact@v4
+        with:
+          name: raw
+          path: raw/
+          retention-days: 1
       - name: Collect the gallery
         run: |
           mkdir site
@@ -57,8 +67,77 @@ jobs:
             "Thirteen 3840x2160 PNG plates, their 960x540 thumbnails, and the SVG sources
           for the line-art plates. Rendered by \`gen_wallpapers.py\` at ${GITHUB_SHA:0:7}.
 
+          The videos job adds thirteen 1920x1080 60 fps AV1 loops for the Flatiron viswall
+          and their captions.txt, made by \`gen_videos.py --cpu\` about two hours later.
+
           The README gallery links here, so this release is replaced on every push to main." \
             *.png thumbs/*.png *.svg
+
+  videos:
+    needs: render
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 4 vCPUs: littlewood and dejong take about 2 h
+    strategy:
+      fail-fast: false
+      matrix:
+        name: ${{ fromJSON(needs.render.outputs.names) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -hide_banner -encoders | grep libsvtav1
+      - name: Install python packages
+        run: pip install numpy scipy matplotlib pillow
+      - uses: actions/download-artifact@v4
+        with:
+          name: raw
+          path: raw
+      - name: Render ${{ matrix.name }}
+        run: python gen_videos.py ${{ matrix.name }} --cpu
+      - name: Check the video
+        run: |
+          f=videos/${{ matrix.name }}.webm
+          got=$(ffprobe -v error -select_streams v:0 -count_packets -of csv=p=0 \
+                -show_entries stream=codec_name,width,height,r_frame_rate,nb_read_packets "$f")
+          echo "$f: $got"
+          test "$got" = "av1,1920,1080,60/1,1800"
+          ffmpeg -v error -xerror -i "$f" -f null -
+          echo "$f decodes clean: av1 1920x1080 60 fps, 1800 frames"
+      - name: Show the ffmpeg log
+        if: failure()
+        run: cat /tmp/viswall-*.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ matrix.name }}
+          path: videos/
+          retention-days: 1
+
+  release-videos:
+    needs: [render, videos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: video-*
+          path: videos
+          merge-multiple: true
+      - name: Attach the videos to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAMES: ${{ needs.render.outputs.names }}
+        run: |
+          want=$(jq length <<< "$NAMES")
+          webm=(videos/*.webm)
+          got=${#webm[@]}
+          echo "$got of $want videos"
+          test "$got" = "$want"
+          test -s videos/captions.txt
+          gh release upload latest videos/*.webm videos/captions.txt --repo "$GITHUB_REPOSITORY" --clobber
 
   pages:
     needs: render
