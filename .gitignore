@@ -1,5 +1,7 @@
 *.png
 *.svg
 previews/
+videos/
+videos-marco-barbone/
 __pycache__/
 index.html
