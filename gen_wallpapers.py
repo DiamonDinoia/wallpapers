@@ -375,11 +375,11 @@ def band_x(art: Image.Image, y: int, w: int, h: int) -> int:
 def anchor_xy(anchor: str, w: int, h: int, art: Image.Image | None = None) -> tuple[int, int]:
     """Top-left pixel of a w x h caption at a named inset position.
 
-    The name is "<top|middle|bottom>[-<left|center|right>]". Named without a side, the
+    The name is "<top|upper|middle|bottom>[-<left|center|right>]". Named without a side, the
     caption slides along that band to wherever it covers the least artwork.
     """
     v, _, hz = anchor.partition("-")
-    y = {"top": PLATE_MARGIN + EQ_PAD, "middle": (H - h) // 2,
+    y = {"top": PLATE_MARGIN + EQ_PAD, "upper": H // 8, "middle": (H - h) // 2,
          "bottom": H - PLATE_MARGIN - EQ_PAD - h}[v]
     if not hz:
         return band_x(art, y, w, h), y
@@ -869,7 +869,7 @@ def apply_overlays_numerics() -> None:
         [r"$\varphi(z) = e^{\beta(\sqrt{1-z^2}-1)}, \quad \beta = 2.30\,w, \ w = 7$",
          r"$f_j = \sum_k c_k\, \varphi(\sigma x_k - j), \quad \sigma = 2, "
          r"\quad \varphi = 10^{-1/2} \ldots 10^{-13/2}$"],
-        anchor="top",  # the sigma=2 grid rules out every window; the band scan clears the rings
+        anchor="upper",  # the sigma=2 grid rules out every window; the band scan clears the rings
     )
     overlay_eq(
         "pseudospectra",
