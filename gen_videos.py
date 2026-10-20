@@ -6,14 +6,14 @@ the overlay is typeset once per video and composited onto every frame.
 Periods are integers in loops, so frame N-1 glides into frame 0 exactly;
 `--selfcheck` asserts that for every video.
 
-    python3 gen_videos.py [names...] [--preview]   # spec: 1800 frames, 1920x1080
+    python3 gen_videos.py [names...] [--preview] [--cpu]   # spec: 1800 frames, 1920x1080
     python3 gen_videos.py --selfcheck              # assert fn(2pi) == fn(0) per loop
 
 Frames render on CPU with numpy in a fork pool and pipe as rgb24 rawvideo into
-one av1_nvenc call per video. A cupy GPU port was A/B-measured and dropped:
-slower end to end (single-process generation loses to the 20-worker pool on the
-chaotic-map and stamp-loop clips); see the viswall-gpu notes in the repo's
-scratch dir for the numbers.
+one av1_nvenc call per video, or libsvtav1 with --cpu on hosts without NVENC.
+A cupy GPU port was A/B-measured and dropped: slower end to end (single-process
+generation loses to the 20-worker pool on the chaotic-map and stamp-loop clips);
+see the viswall-gpu notes in the repo's scratch dir for the numbers.
 """
 
 import os
@@ -979,7 +979,15 @@ def _render_one(i: int) -> bytes:
     return arr.tobytes()
 
 
-def encode(name: str, fn, layers, preview: bool) -> Path:
+# libsvtav1 serves hosts without NVENC (CI runners): on lorenz, SSIM Y 0.996 vs av1_nvenc at 1.8x its size
+CODEC = {
+    "av1_nvenc": ["-c:v", "av1_nvenc", "-preset", "p7", "-tune", "hq",
+                  "-rc", "vbr", "-cq", "30", "-b:v", "0", "-multipass", "fullres"],
+    "libsvtav1": ["-c:v", "libsvtav1", "-preset", "6", "-crf", "30"],
+}
+
+
+def encode(name: str, fn, layers, preview: bool, codec: str = "av1_nvenc") -> Path:
     w, h = (960, 540) if preview else (W, H)
     nframes = FPS * (5 if preview else SECONDS)
     global _FN, _LAYERS
@@ -988,7 +996,7 @@ def encode(name: str, fn, layers, preview: bool) -> Path:
     dest = (PREV_DIR if preview else VID)
     dest.mkdir(exist_ok=True)
     out = dest / f"{name}.webm"
-    # one call: av1_nvenc on the GPU; no passlog, no second read of the frames
+    # one call; no passlog, no second read of the frames
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
            "-s", f"{w}x{h}", "-r", str(FPS), "-i", "-", "-an",
            # yuv420p so players get the 8-bit profile they render correctly:
@@ -996,9 +1004,7 @@ def encode(name: str, fn, layers, preview: bool) -> Path:
            "-vf", "format=yuv420p",
            "-color_primaries", "bt709", "-color_trc", "bt709",
            "-colorspace", "bt709", "-color_range", "tv",
-           "-c:v", "av1_nvenc", "-preset", "p7", "-tune", "hq",
-           "-rc", "vbr", "-cq", "30", "-b:v", "0", "-multipass", "fullres",
-           str(out)]
+           *CODEC[codec], str(out)]
     t0 = time.time()
     if getattr(fn, "gpu", False):
         # cupy frames come from the parent: a CUDA context cannot cross fork()
@@ -1108,15 +1114,16 @@ def main() -> None:
     ap.add_argument("names", nargs="*", choices=NAMES, help="subset (default: all)")
     ap.add_argument("--preview", action="store_true", help="960x540, 5 s, single pass")
     ap.add_argument("--selfcheck", action="store_true")
+    ap.add_argument("--cpu", action="store_true", help="encode with libsvtav1, not av1_nvenc")
     args = ap.parse_args()
     if args.selfcheck:
         selfcheck()
         return
+    VID.mkdir(exist_ok=True)
+    (VID / "captions.txt").write_text("".join(f"{n}\n{TXT[n]}\n\n" for n in sorted(TXT)))
     for name in (args.names or NAMES):
         fn, layers = build(name, args.preview)
-        VID.mkdir(exist_ok=True)
-        (VID / f"{name}.txt").write_text(TXT[name] + "\n")
-        encode(name, fn, layers, args.preview)
+        encode(name, fn, layers, args.preview, "libsvtav1" if args.cpu else "av1_nvenc")
     print("all done", flush=True)
 
 
