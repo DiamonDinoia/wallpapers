@@ -439,20 +439,21 @@ def empty_window(art: Image.Image, w: int, h: int) -> tuple[int, int] | None:
     return j * b + (cw * b - w) // 2, i * b + (ch * b - h) // 2
 
 
-def sign(art: Image.Image, taken: tuple[int, int, int, int]) -> str:
-    """Set the credit in the corner with the least ink that the caption does not hold.
-
-    Overlap costs more than any amount of artwork, so the signature always yields the
-    corner to the equation. Returns the corner it took.
-    """
+def credit_block() -> tuple[Image.Image, Image.Image, int, int]:
+    """The name + license pair, set once; (name, license, w, h)."""
     sc = EQ_SCALE * CREDIT_SCALE
     name = caption([CREDIT], CREDIT_COLOR, W, scale=sc)[0]
     lic = caption([CREDIT_LICENSE], CREDIT_COLOR, W, scale=sc * CREDIT_LICENSE_SCALE)[0]
-    w, h = max(name.width, lic.width), name.height + 14 + lic.height
+    return name, lic, max(name.width, lic.width), name.height + 14 + lic.height
+
+
+def sign_spot(art: Image.Image, taken: tuple[int, int, int, int], w: int, h: int) -> tuple[str, tuple[int, int]]:
+    """The least-inky free corner for a w x h block, and its top-left pixel."""
     lum = np.asarray(art.convert("RGB"), dtype=np.float32) @ np.array(
         [0.2126, 0.7152, 0.0722], dtype=np.float32
     )
-    at, xy, best = None, None, None
+    at = xy = None
+    best = None
     for anchor in CORNERS:
         x, y = anchor_xy(anchor, w, h)
         win = lum[y - EQ_PAD:y + h + EQ_PAD, x - EQ_PAD:x + w + EQ_PAD]
@@ -460,6 +461,18 @@ def sign(art: Image.Image, taken: tuple[int, int, int, int]) -> str:
         score = (win > BG_LUM + 8).mean() + 10.0 * hit
         if best is None or score < best:
             at, xy, best = anchor, (x, y), score
+    assert at is not None and xy is not None  # the first corner always sets both
+    return at, xy
+
+
+def sign(art: Image.Image, taken: tuple[int, int, int, int]) -> str:
+    """Set the credit in the corner with the least ink that the caption does not hold.
+
+    Overlap costs more than any amount of artwork, so the signature always yields the
+    corner to the equation. Returns the corner it took.
+    """
+    name, lic, w, h = credit_block()
+    at, xy = sign_spot(art, taken, w, h)
     sig = Image.new("RGBA", (w, h), (0, 0, 0, 0))  # the license hangs off the same edge
     off = (lambda im: 0) if at.endswith("left") else (lambda im: w - im.width)
     sig.paste(name, (off(name), 0))
