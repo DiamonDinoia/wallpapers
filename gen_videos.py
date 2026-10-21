@@ -979,11 +979,12 @@ def _render_one(i: int) -> bytes:
     return arr.tobytes()
 
 
-# libsvtav1 serves hosts without NVENC (CI runners): on lorenz, SSIM Y 0.996 vs av1_nvenc at 1.8x its size
+# libsvtav1 serves hosts without NVENC (CI runners). Of crf 30/26/24/22/20, 26 is the highest
+# whose SSIM Y on dejong's grain reaches av1_nvenc's (0.9528 vs 0.9522, SVT-AV1 1.7.0).
 CODEC = {
     "av1_nvenc": ["-c:v", "av1_nvenc", "-preset", "p7", "-tune", "hq",
                   "-rc", "vbr", "-cq", "30", "-b:v", "0", "-multipass", "fullres"],
-    "libsvtav1": ["-c:v", "libsvtav1", "-preset", "6", "-crf", "30"],
+    "libsvtav1": ["-c:v", "libsvtav1", "-preset", "6", "-crf", "26"],
 }
 
 
