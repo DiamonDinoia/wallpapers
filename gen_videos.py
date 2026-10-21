@@ -979,13 +979,59 @@ def _render_one(i: int) -> bytes:
     return arr.tobytes()
 
 
-# libsvtav1 serves hosts without NVENC (CI runners). On dejong's grain, crf 26 (SVT-AV1 1.7.0)
-# reaches 35.29 dB RGB PSNR vs av1_nvenc's 35.10 dB; crf 30 smeared it.
+# libsvtav1 serves hosts without NVENC (CI runners). crf 26 on 120 dejong frames
+# (ffmpeg 6.1, SVT-AV1 1.7.0): 35.29 dB RGB PSNR vs av1_nvenc's 35.10 dB.
 CODEC = {
     "av1_nvenc": ["-c:v", "av1_nvenc", "-preset", "p7", "-tune", "hq",
                   "-rc", "vbr", "-cq", "30", "-b:v", "0", "-multipass", "fullres"],
     "libsvtav1": ["-c:v", "libsvtav1", "-preset", "6", "-crf", "26"],
 }
+
+
+def ffmpeg_cmd(w: int, h: int, out: Path, codec: str) -> list:
+    """rgb24 frames on stdin -> one AV1 webm; one call, no passlog, no second read."""
+    return ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+            "-s", f"{w}x{h}", "-r", str(FPS), "-i", "-", "-an",
+            # yuv420p so players get the 8-bit profile they render correctly:
+            # rgb-profile AV1 shows up black or range-misread in several players.
+            # The explicit bt709 matrix matches the tags below: ffmpeg 6.1's plain
+            # format=yuv420p shifted R by -0.6 and lost 0.76 dB RGB PSNR on dejong (crf 26).
+            "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p",
+            "-color_primaries", "bt709", "-color_trc", "bt709",
+            "-colorspace", "bt709", "-color_range", "tv",
+            *CODEC[codec], str(out)]
+
+
+def colorcheck(codec: str) -> None:
+    """A flat red must encode to bt709 limited-range Y'CbCr, as the stream tags declare.
+
+    ffmpeg 6.1's plain format=yuv420p used bt601 here; the bt601 values of this red
+    sit outside the tolerance, so the check fails on that bug (control asserted)."""
+    rgb, w, h, tol = (200, 40, 40), 320, 180, 2
+
+    def ycbcr(kr, kb):
+        r, g, b = (c / 255 for c in rgb)
+        y = kr * r + (1 - kr - kb) * g + kb * b
+        return np.array([16 + 219 * y, 128 + 224 * (b - y) / (2 - 2 * kb), 128 + 224 * (r - y) / (2 - 2 * kr)])
+
+    want, bt601 = ycbcr(0.2126, 0.0722), ycbcr(0.299, 0.114)
+    assert np.abs(bt601 - want).max() > 2 * tol, "this colour cannot tell bt601 from bt709"
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "c.webm"
+        frames = np.tile(np.array(rgb, np.uint8), (8, h, w, 1)).tobytes()
+        subprocess.run(ffmpeg_cmd(w, h, out, codec), input=frames, check=True)
+        tags = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-of", "default=nw=1",
+                               "-show_entries", "stream=color_space,color_range", str(out)],
+                              capture_output=True, text=True, check=True).stdout.split()
+        assert sorted(tags) == ["color_range=tv", "color_space=bt709"], f"{codec}: tags {tags}"
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-frames:v", "1",
+                              "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"],
+                             capture_output=True, check=True).stdout
+    p = np.frombuffer(raw, np.uint8).astype(float)
+    got = np.array([p[:w * h].mean(), p[w * h:w * h * 5 // 4].mean(), p[w * h * 5 // 4:].mean()])
+    assert np.abs(got - want).max() <= tol, f"{codec}: Y'CbCr {got.round(1)}, bt709 wants {want.round(1)}"
+    print(f"colorcheck {codec}: Y'CbCr {got.round(1)} within {tol} of bt709 {want.round(1)}, "
+          f"tags bt709/tv; bt601 {bt601.round(1)} would fail", flush=True)
 
 
 def encode(name: str, fn, layers, preview: bool, codec: str = "av1_nvenc") -> Path:
@@ -997,17 +1043,7 @@ def encode(name: str, fn, layers, preview: bool, codec: str = "av1_nvenc") -> Pa
     dest = (PREV_DIR if preview else VID)
     dest.mkdir(exist_ok=True)
     out = dest / f"{name}.webm"
-    # one call; no passlog, no second read of the frames
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-           "-s", f"{w}x{h}", "-r", str(FPS), "-i", "-", "-an",
-           # yuv420p so players get the 8-bit profile they render correctly:
-           # rgb-profile AV1 shows up black or range-misread in several players.
-           # The explicit bt709 matrix matches the tags below: ffmpeg 6.1's plain
-           # format=yuv420p shifted R by -0.6 and lost 0.76 dB RGB PSNR on dejong.
-           "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p",
-           "-color_primaries", "bt709", "-color_trc", "bt709",
-           "-colorspace", "bt709", "-color_range", "tv",
-           *CODEC[codec], str(out)]
+    cmd = ffmpeg_cmd(w, h, out, codec)
     t0 = time.time()
     if getattr(fn, "gpu", False):
         # cupy frames come from the parent: a CUDA context cannot cross fork()
@@ -1122,11 +1158,13 @@ def main() -> None:
     if args.selfcheck:
         selfcheck()
         return
+    codec = "libsvtav1" if args.cpu else "av1_nvenc"
+    colorcheck(codec)
     VID.mkdir(exist_ok=True)
     (VID / "captions.txt").write_text("".join(f"{n}\n{TXT[n]}\n\n" for n in sorted(TXT)))
     for name in (args.names or NAMES):
         fn, layers = build(name, args.preview)
-        encode(name, fn, layers, args.preview, "libsvtav1" if args.cpu else "av1_nvenc")
+        encode(name, fn, layers, args.preview, codec)
     print("all done", flush=True)
 
 
