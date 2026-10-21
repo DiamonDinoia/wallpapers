@@ -979,8 +979,8 @@ def _render_one(i: int) -> bytes:
     return arr.tobytes()
 
 
-# libsvtav1 serves hosts without NVENC (CI runners). Of crf 30/26/24/22/20, 26 is the highest
-# whose SSIM Y on dejong's grain reaches av1_nvenc's (0.9528 vs 0.9522, SVT-AV1 1.7.0).
+# libsvtav1 serves hosts without NVENC (CI runners). On dejong's grain, crf 26 (SVT-AV1 1.7.0)
+# reaches 35.29 dB RGB PSNR vs av1_nvenc's 35.10 dB; crf 30 smeared it.
 CODEC = {
     "av1_nvenc": ["-c:v", "av1_nvenc", "-preset", "p7", "-tune", "hq",
                   "-rc", "vbr", "-cq", "30", "-b:v", "0", "-multipass", "fullres"],
@@ -1001,8 +1001,10 @@ def encode(name: str, fn, layers, preview: bool, codec: str = "av1_nvenc") -> Pa
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
            "-s", f"{w}x{h}", "-r", str(FPS), "-i", "-", "-an",
            # yuv420p so players get the 8-bit profile they render correctly:
-           # rgb-profile AV1 shows up black or range-misread in several players
-           "-vf", "format=yuv420p",
+           # rgb-profile AV1 shows up black or range-misread in several players.
+           # The explicit bt709 matrix matches the tags below: ffmpeg 6.1's plain
+           # format=yuv420p shifted R by -0.6 and lost 0.76 dB RGB PSNR on dejong.
+           "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p",
            "-color_primaries", "bt709", "-color_trc", "bt709",
            "-colorspace", "bt709", "-color_range", "tv",
            *CODEC[codec], str(out)]
