@@ -50,7 +50,15 @@ jobs:
         with:
           name: raw
           path: raw/
-          retention-days: 1
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plates
+          path: |
+            *.png
+            thumbs/*.png
+            *.svg
+          retention-days: 7
       - name: Collect the gallery
         run: |
           mkdir site
@@ -58,25 +66,11 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
-      - name: Publish the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest --title "4K wallpapers" --target "$GITHUB_SHA" --notes \
-            "Thirteen 3840x2160 PNG plates, their 960x540 thumbnails, and the SVG sources
-          for the line-art plates. Rendered by \`gen_wallpapers.py\` at ${GITHUB_SHA:0:7}.
-
-          The videos job adds thirteen 1920x1080 60 fps AV1 loops for the Flatiron viswall
-          and their captions.txt, made by \`gen_videos.py --cpu\` about two hours later.
-
-          The README gallery links here, so this release is replaced on every push to main." \
-            *.png thumbs/*.png *.svg
 
   videos:
     needs: render
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 4 vCPUs: littlewood and dejong take about 2 h
+    timeout-minutes: 360  # 4 vCPUs: dejong took 100 min in run 39646288367
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +84,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -1
+          dpkg-query -W 'libsvtav1enc*'
           ffmpeg -hide_banner -encoders | grep libsvtav1
       - name: Install python packages
         run: pip install numpy scipy matplotlib pillow
@@ -115,29 +111,48 @@ jobs:
         with:
           name: video-${{ matrix.name }}
           path: videos/
-          retention-days: 1
+          retention-days: 7
 
-  release-videos:
+  # one job replaces the release once every plate and video exists: a failed or
+  # cancelled run leaves the previous release whole
+  publish:
     needs: [render, videos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: plates
+      - uses: actions/download-artifact@v4
+        with:
           pattern: video-*
           path: videos
           merge-multiple: true
-      - name: Attach the videos to the release
+      - name: Check the release set
         env:
-          GH_TOKEN: ${{ github.token }}
           NAMES: ${{ needs.render.outputs.names }}
         run: |
           want=$(jq length <<< "$NAMES")
-          webm=(videos/*.webm)
-          got=${#webm[@]}
-          echo "$got of $want videos"
-          test "$got" = "$want"
+          for n in $(jq -r '.[]' <<< "$NAMES"); do
+            test -s "$n.png" && test -s "thumbs/$n-thumb.png" && test -s "videos/$n.webm" || { echo "missing $n"; exit 1; }
+          done
           test -s videos/captions.txt
-          gh release upload latest videos/*.webm videos/captions.txt --repo "$GITHUB_REPOSITORY" --clobber
+          echo "$want plates, thumbnails and videos, plus captions.txt"
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view latest > /dev/null 2>&1; then
+            gh release delete latest --yes --cleanup-tag
+          fi
+          gh release create latest --title "4K wallpapers" --target "$GITHUB_SHA" --notes \
+            "Thirteen 3840x2160 PNG plates, their 960x540 thumbnails, the SVG sources for
+          the line-art plates, and thirteen 1920x1080 60 fps AV1 loops for the Flatiron
+          viswall with their captions.txt. Rendered by \`gen_wallpapers.py\` and
+          \`gen_videos.py --cpu\` at ${GITHUB_SHA:0:7}.
+
+          The README gallery links here, so this release is replaced on every push to main." \
+            ./*.png thumbs/*.png ./*.svg videos/*.webm videos/captions.txt
 
   pages:
     needs: render
