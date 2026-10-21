@@ -69,6 +69,23 @@ licence under it at 0.62 of its type size.
 Everything regenerates deterministically from constants at the top of the
 script (papersizes, palette, seeds); tweak and re-run.
 
+## Videos
+
+`gen_videos.py` animates each plate into a 30 s, 1920x1080, 60 fps AV1 loop for
+the Flatiron viswall, and writes the viswall captions to `videos/captions.txt`.
+It composites on the plates in `raw/`, so run `gen_wallpapers.py` first, and it
+needs `ffmpeg`:
+
+```
+python3 gen_videos.py [names...] [--cpu]   # av1_nvenc by default, libsvtav1 with --cpu
+python3 gen_videos.py --selfcheck          # assert every loop closes
+```
+
+Each run first checks that ffmpeg converts colours with the bt709 matrix the
+files declare. On every push to main, CI renders the thirteen videos in parallel
+with `--cpu` and puts them in the latest release with the plates, as
+`<name>.webm` and `captions.txt`.
+
 ## License
 
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Use them anywhere,
