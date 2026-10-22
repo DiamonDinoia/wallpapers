@@ -88,6 +88,28 @@ with `--cpu`. It splits the two slowest into frame ranges and joins the parts by
 stream copy. Then it puts the videos in the latest release with the plates, as
 `<name>.webm` and `captions.txt`.
 
+## Screensaver
+
+`screensaver/package` is the spread plate as an endless KDE Plasma 6 wallpaper
+plugin. Each drop lands at a new random place every cycle and the grid drifts,
+so no pixel holds a static image. Each drop is its own quad, so a pixel shades
+only the few drops that reach it. Install it, then select "Spread" as the
+lock screen wallpaper (System Settings, Screen Locking, Appearance):
+
+```
+kpackagetool6 -t Plasma/Wallpaper -i screensaver/package    # -u to upgrade
+```
+
+The shaders ship baked as `.qsb`. After an edit, bake them again with the
+command at the top of each `.frag`. `screensaver/check.py` renders two hours of
+the plugin. It asserts that every pixel lights up, the time-mean image is flat
+and the grid draws. The spread video is the positive control: its static
+equation overlay fails the flatness bound.
+
+```
+uv run --with pyside6==6.11.2 --with numpy --with pillow python screensaver/check.py videos/spread.webm
+```
+
 ## License
 
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Use them anywhere,

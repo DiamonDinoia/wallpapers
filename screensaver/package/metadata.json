@@ -1,0 +1,12 @@
+{
+    "KPackageStructure": "Plasma/Wallpaper",
+    "KPlugin": {
+        "Authors": [{ "Name": "DiamonDinoia" }],
+        "Description": "Random drops spread their kernel onto a drifting grid",
+        "Id": "io.github.diamondinoia.spread",
+        "License": "CC-BY-4.0",
+        "Name": "Spread",
+        "Version": "1.0"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
