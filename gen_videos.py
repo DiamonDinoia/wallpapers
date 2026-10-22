@@ -608,31 +608,41 @@ def setup_chebyshev(preview):
 
 
 def setup_dejong(preview):
+    # The orbit crosses periodic windows (frames 194-200, 336-339, 839-845, 1008-1014):
+    # 4000 walkers x 4500 steps fell onto the cycle there and the frame dimmed for 0.1 s.
+    # Short walks stay on the chaotic saddle, and on chaotic frames give the same image.
     rng = np.random.default_rng(3)
-    n_walkers, n_steps = 4000, 4500
+    n_walkers, n_burn, n_steps = 400_000, 10, 45
     x0 = rng.uniform(-2, 2, n_walkers).astype(np.float32)
     y0 = rng.uniform(-2, 2, n_walkers).astype(np.float32)
     hue_tab = CYC(np.linspace(0, 1, 1024))[:, :3].astype(np.float32)
 
-    def fn(phi):
+    def density(phi):
         sa, sb = 0.22 * np.sin(phi), 0.22 * np.cos(phi)
         a, b = 1.4 + sa, -2.3 + sb
         c, d_ = 2.4 - sb, -2.1 - sa  # closed ellipse, exact return at phi=2pi
         x, y = x0.copy(), y0.copy()
         dens = np.zeros((H, W), np.float32)
         sx_, sy_ = np.zeros((H, W), np.float32), np.zeros((H, W), np.float32)
-        for _ in range(n_steps):
+        for k in range(n_burn + n_steps):
             xn = np.sin(a * y) - np.cos(b * x)
             yn = np.sin(c * x) - np.cos(d_ * y)
-            iy = np.clip(((yn + 2.3) / 4.6 * (H - 1)).astype(np.int32), 0, H - 1)
-            ix = np.clip(((xn + 2.3) / 4.6 * (H - 1) + (W - H) // 2 - 500 * W // 3840).astype(np.int32), 0, W - 1)  # 500 was a 4K px shift
-            np.add.at(dens, (iy, ix), 1.0)
-            np.add.at(sx_, (iy, ix), xn - x)
-            np.add.at(sy_, (iy, ix), yn - y)
+            if k >= n_burn:
+                iy = np.clip(((yn + 2.3) / 4.6 * (H - 1)).astype(np.int32), 0, H - 1)
+                ix = np.clip(((xn + 2.3) / 4.6 * (H - 1) + (W - H) // 2 - 500 * W // 3840).astype(np.int32), 0, W - 1)  # 500 was a 4K px shift
+                np.add.at(dens, (iy, ix), 1.0)
+                np.add.at(sx_, (iy, ix), xn - x)
+                np.add.at(sy_, (iy, ix), yn - y)
             x, y = xn, yn
+        return dens, sx_, sy_
+
+    # one exposure for the loop: a per-frame max swung 4x between neighbouring frames
+    ref = np.log1p(density(0.0)[0].max())
+
+    def fn(phi):
+        dens, sx_, sy_ = density(phi)
         hue_idx = np.clip((((np.arctan2(sy_, sx_) + np.pi) / (2 * np.pi)) * 1023).astype(np.int64), 0, 1023)
-        val = np.log1p(dens)
-        val /= val.max()
+        val = np.minimum(np.log1p(dens) / ref, 1.0)
         rgb = hue_tab[hue_idx] * (0.95 * val ** 0.55)[..., None]
         rgb[dens < 1] = hex_to_rgb(BG)
         return to_u8(rgb)
