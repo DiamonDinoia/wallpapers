@@ -110,6 +110,28 @@ equation overlay fails the flatness bound.
 uv run --with pyside6==6.11.2 --with numpy --with pillow python screensaver/check.py videos/spread.webm
 ```
 
+## Debian package
+
+`diamondinoia-wallpapers` installs the plates in `/usr/share/wallpapers/DiamonDinoia`
+and the screensaver plugin. At the next login of each user, Plasma runs its update
+script once: the desktop becomes a 5 min slideshow of the plates and the lock
+screen shows Spread. Users can change both afterwards. The package is in the
+[DiamonDinoia/apt](https://github.com/DiamonDinoia/apt) repository:
+
+```
+sudo apt-get install diamondinoia-wallpapers
+```
+
+`deb/build.sh` builds it from rendered plates. `deb/test.sh` installs it in a
+clean `debian:sid` container and runs Plasma on Xvfb with Mesa. It checks the
+default wallpaper before the install, then the slideshow and lock screen after
+it. It also checks that the slideshow shows a plate pixel by pixel, that a user's
+later choice survives the next login, and that Spread renders:
+
+```
+deb/build.sh out ~/Pictures/wallpapers/*.png && deb/test.sh out/*.deb
+```
+
 ## License
 
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Use them anywhere,

@@ -199,6 +199,46 @@ jobs:
           The README gallery links here, so this release is replaced on every push to main." \
             ./*.png thumbs/*.png ./*.svg videos/*.webm videos/captions.txt
 
+  # DiamonDinoia/apt serves the deb from the `builds` release bit-identical, pinned to
+  # the digest GitHub reports, so the served package is the one this job tested
+  deb:
+    needs: render
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the version counts the commits
+      - uses: actions/download-artifact@v4
+        with:
+          name: plates
+          path: plates
+      - name: Build the deb
+        env:
+          NAMES: ${{ needs.render.outputs.names }}
+        run: |
+          mapfile -t plates < <(jq -r '.[] | "plates/\(.).png"' <<< "$NAMES")
+          deb/build.sh out "${plates[@]}"
+      - name: Install and test it under Plasma in debian:sid
+        run: deb/test.sh out/*.deb
+      - name: Publish the deb on the builds release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -- out/*.deb
+          test $# = 1
+          deb=$1 name=$(basename "$1")
+          gh release view builds > /dev/null 2>&1 ||
+            gh release create builds --latest=false --title "deb builds" --notes "Built debs for DiamonDinoia/apt. Do not delete."
+          gh release upload builds "$deb" --clobber
+          remote=$(gh release view builds --json assets --jq ".assets[] | select(.name == \"$name\") | .digest")
+          test "$remote" = "sha256:$(sha256sum "$deb" | cut -d' ' -f1)"
+          # the apt repository keeps its own copy, so only the newest deb stays here
+          gh release view builds --json assets --jq '.assets[].name' | grep -vxF "$name" |
+            xargs -r -n1 gh release delete-asset builds --yes
+          echo "$name published, digest $remote matches the tested bytes"
+
   pages:
     needs: render
     runs-on: ubuntu-latest
