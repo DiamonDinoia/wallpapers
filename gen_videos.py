@@ -61,7 +61,7 @@ TXT = {
 "chebyshev": """Chebyshev polynomials traced in polar coordinates make roses with petals, one rose per degree one through eight. A bright highlight sweeps along every curve, riding the petals like a bead on a wire. The sweep completes whole turns, so the motion loops without a seam.""",
 "dejong": """The De Jong map is a pair of trigonometric equations iterated millions of times; the points pile up into a smoky attractor colored by the direction of travel. Here its four constants glide around a tiny closed orbit, and the attractor flexes in response. The constants return to their starting values each loop.""",
 "talbot": """Shine a plane wave through a comb of slits and it reprints its own pattern at regular distances downstream: the Talbot effect. The video flies through the beam, and the carpet of light scrolls past. It advances by exactly one revival period, so the pattern repeats seamlessly.""",
-"spread": """Interpolating scattered data onto a grid means spreading each point's influence with a smooth kernel, shown here as nested rings around every source. The sources wander on small closed loops and their rings follow. Every loop closes exactly, so the animation never jumps.""",
+"spread": """Interpolating scattered data onto a grid means spreading each point's influence with a smooth kernel. Here every point is a water drop. Its ripples fade with the kernel weight and die at the kernel's edge, and each grid node they cross lights up with its share. Every loop closes exactly, so the animation never jumps.""",
 "pseudospectra": """The pseudospectrum of a matrix shows how close it comes to having a given complex number as an eigenvalue, revealing how sensitive it is to perturbation. The tolerance breathes in and out, so the nested halos around the eigenvalue dots grow and shrink. The breathing is sinusoidal and loops exactly.""",
 "stability": """Each colored region is the set of step sizes for which an order-p Runge-Kutta method keeps a decaying wave from blowing up. The regions pile up one order at a time over the loop, from the small first-order disk to the lobed eighth-order shape, older ones dimming so the newest reads; the full stack holds, then fades out together. The cycle is continuous, so it loops without a cut.""",
 "gamma": """The gamma function extends the factorial to all complex numbers; here color encodes its angle and brightness bands its size, with poles burning bright on the left. A global phase factor slowly rotates the hue wheel one full turn. After one full turn the colors are back where they started.""",
@@ -689,37 +689,42 @@ def setup_spread(preview):
     rng = np.random.default_rng(23)
     R = 300.0 * (W / 3840)  # the static's R is a 4K px radius; scale like torus/dejong
     step = H // 9
-    grid_cols = [np.column_stack([[gx, 0], [gx, H]]) for gx in range(0, W, step)]
-    grid_rows = [np.column_stack([[0, gy], [W, gy]]) for gy in range(0, H, step)]
+    base = canvas_bg()
+    base[:, ::step] = base[::step, :] = hex_to_rgb("#1a2534")  # the plate's 1.6 px 4K grid
+    gx, gy = (a.ravel() for a in np.meshgrid(np.arange(0, W, step), np.arange(0, H, step)))
     th = np.linspace(0, 2 * np.pi, 361)
-    beta = 2.30 * w_
-    dec = np.arange(0.5, 7.0, 0.5)
-    dec = dec[dec * np.log(10) < beta]
-    rad = R * np.sqrt(1 - (1 - dec * np.log(10) / beta) ** 2)
+    # each drop sends RINGS ripples out to the kernel support R: ring j leaves at
+    # t = GAP*j and reaches R at t = GAP*j + RISE, so the last ring dies at t = 1
+    RINGS, GAP = 5, 0.1
+    RISE = 1 - GAP * (RINGS - 1)
     sources = []
-    for k in range(m):
+    for k in range(m):  # same draws as the static plate, so the drops sit on its sources
         sx, sy = rng.uniform(-R, W + R), rng.uniform(-R, H + R)
         col = np.asarray(hex_to_rgb(ramp3(TEAL, BREEZE, VIOLET, rng.random())), np.float32)
-        kk = int(rng.integers(1, 4))
-        rx = rng.uniform(15, 45)
-        ry = rng.uniform(15, 45)
-        dir_ = rng.choice([-1, 1])
-        ph0 = rng.uniform(0, 2 * np.pi)
-        sources.append((sx, sy, col, kk, rx, ry, dir_, ph0))
-    gridc = np.asarray(hex_to_rgb("#1a2534"), np.float32)
+        z = np.hypot(gx - sx, gy - sy) / R
+        near = z < 1
+        sources.append((sx, sy, col, gx[near], gy[near], z[near]))
+    drops = rng.integers(3, 7, m)  # drops per loop
+    ph0 = rng.random(m)
     amb = np.asarray(hex_to_rgb(AMBER), np.float32)
 
     def fn(phi):
-        canvas = canvas_bg()
-        for g in grid_cols + grid_rows:
-            stamp(canvas, g[:, 0], g[:, 1], gridc, 1.0, 3)
-        for sx, sy, col, kk, rx, ry, dir_, ph0 in sources:
-            x = sx + rx * np.cos(kk * phi * dir_ + ph0)
-            y = sy + ry * np.sin(kk * phi * dir_ + ph0)
-            for li, rrr in enumerate(rad):
-                pts = np.column_stack([x + rrr * np.cos(th), y + rrr * np.sin(th)])
-                draw_line(canvas, pts, col, 0.85 - 0.05 * li, 3)
-            stamp(canvas, [x], [y], amb, 1.0, 7)
+        canvas = base.copy()
+        for (sx, sy, col, nx, ny, nz), kk, p0 in zip(sources, drops, ph0):
+            t = (kk * phi / (2 * np.pi) + p0) % 1.0
+            for j in range(RINGS):
+                z = (t - GAP * j) / RISE
+                if 2 / R < z < 1:  # a sub-pixel ring would pile 361 stamps on one pixel
+                    pts = np.column_stack([sx + R * z * np.cos(th), sy + R * z * np.sin(th)])
+                    # sqrt(1 - z^2) = 1 - log10 phi(z) / log10 phi(1): the kernel weight in decades
+                    draw_line(canvas, pts, col, (0.85 - 0.05 * j) * np.sqrt(1 - z * z), 3)
+            # a grid node takes its kernel weight when the first ring reaches it, then fades out by t = 1
+            hit = t >= nz * RISE
+            if hit.any():
+                glow = np.sqrt(1 - nz[hit] ** 2) * ((1 - t) / (1 - nz[hit] * RISE)) ** 2
+                stamp(canvas, nx[hit], ny[hit], col, 1.5 * glow, 11)
+            stamp(canvas, [sx], [sy], amb, 1.0, 7)
+            stamp(canvas, [sx], [sy], amb, 0.8 * (1 - t) ** 12, 11)  # the impact
         return to_u8(canvas)
     return fn
 
