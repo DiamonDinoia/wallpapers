@@ -117,8 +117,19 @@ jobs:
                 -show_entries stream=codec_name,width,height,r_frame_rate,nb_read_packets "$f")
           echo "$f: $got"
           test "$got" = "av1,1920,1080,60/1,$want"
-          ffmpeg -v error -xerror -i "$f" -f null -
-          echo "$f decodes clean: av1 1920x1080 60 fps, $want frames"
+          # largest change of mean luma between frames: dejong's periodic-window dips
+          # were 6.3, the other loops stay below 0.32 (2026-10-22)
+          maxdy() {
+            ffmpeg -v error -xerror -i "$1" -vf "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=$2" -f null -
+            awk -F= '/YAVG/ { if (n++) { d = $2 - p; d = d < 0 ? -d : d; m = d > m ? d : m } p = $2 } END { print m + 0 }' "$2"
+          }
+          ffmpeg -v error -f lavfi -i "color=c=0x606060:s=64x36:r=60:d=1,drawbox=c=0x404040:t=fill:enable='between(n,30,35)'" \
+            -c:v libsvtav1 "$RUNNER_TEMP/dip.webm"
+          dip=$(maxdy "$RUNNER_TEMP/dip.webm" "$RUNNER_TEMP/dip.y")
+          awk -v d="$dip" 'BEGIN { exit !(d > 1) }' || { echo "control: a 6-frame dip gives max |dY| $dip, not above 1"; exit 1; }
+          dy=$(maxdy "$f" "$RUNNER_TEMP/y")
+          awk -v d="$dy" 'BEGIN { exit !(d <= 1) }' || { echo "$f flickers: max |dY| $dy above 1"; exit 1; }
+          echo "$f decodes clean: av1 1920x1080 60 fps, $want frames, max |dY| $dy (control dip $dip)"
       - name: Show the ffmpeg log
         if: failure()
         run: cat /tmp/viswall-*.log
