@@ -6,11 +6,12 @@ the overlay is typeset once per video and composited onto every frame.
 Periods are integers in loops, so frame N-1 glides into frame 0 exactly;
 `--selfcheck` asserts that for every video.
 
-    python3 gen_videos.py [names...] [--preview] [--cpu]   # spec: 1800 frames, 1920x1080
+    python3 gen_videos.py [names...] [--preview] [--cpu] [--part K/N]   # spec: 1800 frames, 1920x1080
     python3 gen_videos.py --selfcheck              # assert fn(2pi) == fn(0) per loop
 
 Frames render on CPU with numpy in a fork pool and pipe as rgb24 rawvideo into
 one av1_nvenc call per video, or libsvtav1 with --cpu on hosts without NVENC.
+--part K/N encodes only the K-th of N frame ranges; CI joins the parts by stream copy.
 A cupy GPU port was A/B-measured and dropped: slower end to end (single-process
 generation loses to the 20-worker pool on the chaotic-map and stamp-loop clips);
 see the viswall-gpu notes in the repo's scratch dir for the numbers.
@@ -1034,22 +1035,25 @@ def colorcheck(codec: str) -> None:
           f"tags bt709/tv; bt601 {bt601.round(1)} would fail", flush=True)
 
 
-def encode(name: str, fn, layers, preview: bool, codec: str = "av1_nvenc") -> Path:
+def encode(name: str, fn, layers, preview: bool, codec: str = "av1_nvenc",
+           part: tuple[int, int] = (0, 1)) -> Path:
     w, h = (960, 540) if preview else (W, H)
     nframes = FPS * (5 if preview else SECONDS)
+    k, n = part
+    frames = range(k * nframes // n, (k + 1) * nframes // n)
     global _FN, _LAYERS
     _FN, _LAYERS = fn, layers  # set before Pool(): fork workers inherit them
     log = tempfile.NamedTemporaryFile(prefix=f"viswall-{name}-", suffix=".log", delete=False)
     dest = (PREV_DIR if preview else VID)
     dest.mkdir(exist_ok=True)
-    out = dest / f"{name}.webm"
+    out = dest / (f"{name}.webm" if n == 1 else f"{name}.part{k}.webm")
     cmd = ffmpeg_cmd(w, h, out, codec)
     t0 = time.time()
     if getattr(fn, "gpu", False):
         # cupy frames come from the parent: a CUDA context cannot cross fork()
         with open(log.name, "ab") as lf:
             proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=lf)
-            for i in range(nframes):
+            for i in frames:
                 arr = composite(layers, fn((i / nframes) * 2 * np.pi))
                 if preview:
                     arr = np.asarray(Image.fromarray(arr).resize((960, 540), Image.LANCZOS))
@@ -1069,7 +1073,7 @@ def encode(name: str, fn, layers, preview: bool, codec: str = "av1_nvenc") -> Pa
         with open(log.name, "ab") as lf:
             proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=lf)
             try:
-                for chunk in pool.imap(_render_one, range(nframes), chunksize=1):
+                for chunk in pool.imap(_render_one, frames, chunksize=1):
                     proc.stdin.write(chunk)
                 proc.stdin.close()
             except BrokenPipeError:
@@ -1154,7 +1158,12 @@ def main() -> None:
     ap.add_argument("--preview", action="store_true", help="960x540, 5 s, single pass")
     ap.add_argument("--selfcheck", action="store_true")
     ap.add_argument("--cpu", action="store_true", help="encode with libsvtav1, not av1_nvenc")
+    ap.add_argument("--part", default="0/1", metavar="K/N",
+                    help="encode only frame range K of N into NAME.partK.webm")
     args = ap.parse_args()
+    k, n = map(int, args.part.split("/"))
+    if not 0 <= k < n:
+        ap.error(f"--part {args.part}: need 0 <= K < N")
     if args.selfcheck:
         selfcheck()
         return
@@ -1164,7 +1173,7 @@ def main() -> None:
     (VID / "captions.txt").write_text("".join(f"{n}\n{TXT[n]}\n\n" for n in sorted(TXT)))
     for name in (args.names or NAMES):
         fn, layers = build(name, args.preview)
-        encode(name, fn, layers, args.preview, codec)
+        encode(name, fn, layers, args.preview, codec, (k, n))
     print("all done", flush=True)
 
 
