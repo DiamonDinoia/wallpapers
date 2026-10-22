@@ -34,7 +34,7 @@ Package: diamondinoia-wallpapers
 Version: $version
 Architecture: all
 Maintainer: $maintainer
-Depends: plasma-desktop (>= 4:6.0), libqt6quick6 (>= 6.11)
+Depends: plasma-desktop (>= 4:6.0)
 Installed-Size: $(du -sk --exclude=DEBIAN "$tree" | cut -f1)
 Section: x11
 Priority: optional

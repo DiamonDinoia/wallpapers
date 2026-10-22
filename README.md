@@ -113,20 +113,32 @@ uv run --with pyside6==6.11.2 --with numpy --with pillow python screensaver/chec
 ## Debian package
 
 `diamondinoia-wallpapers` installs the plates in `/usr/share/wallpapers/DiamonDinoia`
-and the screensaver plugin. At the next login of each user, Plasma runs its update
-script once: the desktop becomes a 5 min slideshow of the plates and the lock
-screen shows Spread. Users can change both afterwards. The package is in the
+and the Spread wallpaper plugin. At the next login of each user, Plasma runs its
+update script once: the desktop becomes a 5 min slideshow of the plates and the lock
+screen shows Spread. The package does not change when the screen locks. Users can
+change both afterwards. The package is in the
 [DiamonDinoia/apt](https://github.com/DiamonDinoia/apt) repository:
 
 ```
 sudo apt-get install diamondinoia-wallpapers
 ```
 
+`deb/test.sh` passes on Debian sid (Plasma 6.7, Qt 6.11) and trixie (Plasma 6.3, Qt 6.8).
+The script runs once per user, so a later version does not reset a user's choice.
+Removing the package leaves each user's Plasma settings in place: a desktop that
+still shows the slideshow then has no plates, and the lock screen turns black.
+Plasma shows a black screen with no panel for a desktop wallpaper plugin that is
+not installed, so switch any desktop that shows Spread to another wallpaper before
+the removal.
+
 `deb/build.sh` builds it from rendered plates. `deb/test.sh` installs it in a
-clean `debian:sid` container and runs Plasma on Xvfb with Mesa. It checks the
-default wallpaper before the install, then the slideshow and lock screen after
-it. It also checks that the slideshow shows a plate pixel by pixel, that a user's
-later choice survives the next login, and that Spread renders:
+clean `debian:sid` container, or the image in `IMAGE`, and runs Plasma and the
+lock screen on Xvfb with Mesa.
+It checks the default wallpaper before the install, then the slideshow and lock
+screen after it, also for a user created after the install. It also checks that
+the slideshow shows a plate pixel by pixel, that a user's later choice survives the
+next login, that Spread renders on the desktop and the lock screen, and that both
+start without Spread after a purge:
 
 ```
 deb/build.sh out ~/Pictures/wallpapers/*.png && deb/test.sh out/*.deb
