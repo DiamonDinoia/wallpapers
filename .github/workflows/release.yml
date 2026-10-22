@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 90
     outputs:
       names: ${{ steps.names.outputs.names }}
+      split: ${{ steps.names.outputs.split }}
+      matrix: ${{ steps.names.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,7 +46,18 @@ jobs:
           print(len(g.NAMES), "plates and thumbnails")
           EOF
       - id: names
-        run: python -c "import json, gen_wallpapers as g; print('names=' + json.dumps(g.NAMES))" >> "$GITHUB_OUTPUT"
+        run: |
+          python - >> "$GITHUB_OUTPUT" <<'EOF'
+          import json, gen_wallpapers as g
+          # frame-range parts for the longest videos on 4 vCPUs: dejong took 76-100 min,
+          # littlewood 58 min, the next longest 19 min (runs 39646288367, 39676328235)
+          split = {"dejong": 5, "littlewood": 3}
+          jobs = [{"name": n, "part": k, "parts": split.get(n, 1)}
+                  for n in g.NAMES for k in range(split.get(n, 1))]
+          print("names=" + json.dumps(g.NAMES))
+          print("split=" + json.dumps(split))
+          print("matrix=" + json.dumps({"include": jobs}))
+          EOF
       # gen_videos.py composites its overlays on these plates
       - uses: actions/upload-artifact@v4
         with:
@@ -70,11 +83,10 @@ jobs:
   videos:
     needs: render
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 4 vCPUs: dejong took 100 min in run 39646288367
+    timeout-minutes: 120  # hang detector: the longest part takes about 25 min
     strategy:
       fail-fast: false
-      matrix:
-        name: ${{ fromJSON(needs.render.outputs.names) }}
+      matrix: ${{ fromJSON(needs.render.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -93,23 +105,26 @@ jobs:
         with:
           name: raw
           path: raw
-      - name: Render ${{ matrix.name }}
-        run: python gen_videos.py ${{ matrix.name }} --cpu
+      - name: Render ${{ matrix.name }} part ${{ matrix.part }}/${{ matrix.parts }}
+        run: python gen_videos.py ${{ matrix.name }} --cpu --part ${{ matrix.part }}/${{ matrix.parts }}
       - name: Check the video
         run: |
-          f=videos/${{ matrix.name }}.webm
+          set -- videos/*.webm
+          test $# = 1
+          f=$1 k=${{ matrix.part }} n=${{ matrix.parts }}
+          want=$(( (k + 1) * 1800 / n - k * 1800 / n ))
           got=$(ffprobe -v error -select_streams v:0 -count_packets -of csv=p=0 \
                 -show_entries stream=codec_name,width,height,r_frame_rate,nb_read_packets "$f")
           echo "$f: $got"
-          test "$got" = "av1,1920,1080,60/1,1800"
+          test "$got" = "av1,1920,1080,60/1,$want"
           ffmpeg -v error -xerror -i "$f" -f null -
-          echo "$f decodes clean: av1 1920x1080 60 fps, 1800 frames"
+          echo "$f decodes clean: av1 1920x1080 60 fps, $want frames"
       - name: Show the ffmpeg log
         if: failure()
         run: cat /tmp/viswall-*.log
       - uses: actions/upload-artifact@v4
         with:
-          name: video-${{ matrix.name }}
+          name: video-${{ matrix.name }}-${{ matrix.part }}
           path: videos/
           retention-days: 7
 
@@ -127,6 +142,35 @@ jobs:
           pattern: video-*
           path: videos
           merge-multiple: true
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      # stream copy keeps every packet: the joined file must decode to the frames of
+      # its parts in order, and the parts in reverse order must not match
+      - name: Join the split videos
+        env:
+          SPLIT: ${{ needs.render.outputs.split }}
+        run: |
+          hashes() { ffmpeg -v error -i "$1" -f framemd5 - | grep -v '^#' | cut -d, -f6; }
+          for n in $(jq -r 'keys[]' <<< "$SPLIT"); do
+            parts=() md5s=()
+            for k in $(seq 0 $(( $(jq -r --arg n "$n" '.[$n]' <<< "$SPLIT") - 1 ))); do
+              parts+=("$PWD/videos/$n.part$k.webm") md5s+=("$RUNNER_TEMP/$n.$k.md5")
+              hashes "${parts[-1]}" > "${md5s[-1]}"
+            done
+            printf "file '%s'\n" "${parts[@]}" > "$RUNNER_TEMP/$n.list"
+            ffmpeg -v error -f concat -safe 0 -i "$RUNNER_TEMP/$n.list" -c copy "videos/$n.webm"
+            hashes "videos/$n.webm" > "$RUNNER_TEMP/$n.md5"
+            cat "${md5s[@]}" | cmp - "$RUNNER_TEMP/$n.md5"
+            printf '%s\n' "${md5s[@]}" | tac | xargs cat > "$RUNNER_TEMP/$n.rev"
+            cmp -s "$RUNNER_TEMP/$n.rev" "$RUNNER_TEMP/$n.md5" && exit 1
+            got=$(ffprobe -v error -select_streams v:0 -count_packets -of csv=p=0 \
+                  -show_entries stream=codec_name,width,height,r_frame_rate,nb_read_packets "videos/$n.webm")
+            test "$got" = "av1,1920,1080,60/1,1800"
+            rm "${parts[@]}"
+            echo "$n: ${#parts[@]} parts joined, $got, frame hashes match the parts in order, not in reverse"
+          done
       - name: Check the release set
         env:
           NAMES: ${{ needs.render.outputs.names }}
@@ -136,6 +180,7 @@ jobs:
             test -s "$n.png" && test -s "thumbs/$n-thumb.png" && test -s "videos/$n.webm" || { echo "missing $n"; exit 1; }
           done
           test -s videos/captions.txt
+          compgen -G 'videos/*.part*.webm' && exit 1
           echo "$want plates, thumbnails and videos, plus captions.txt"
       - name: Publish the release
         env:

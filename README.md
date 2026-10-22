@@ -78,12 +78,14 @@ needs `ffmpeg`:
 
 ```
 python3 gen_videos.py [names...] [--cpu]   # av1_nvenc by default, libsvtav1 with --cpu
+python3 gen_videos.py NAME --part K/N      # only frame range K of N, as NAME.partK.webm
 python3 gen_videos.py --selfcheck          # assert every loop closes
 ```
 
 Each run first checks that ffmpeg converts colours with the bt709 matrix the
 files declare. On every push to main, CI renders the thirteen videos in parallel
-with `--cpu` and puts them in the latest release with the plates, as
+with `--cpu`. It splits the two slowest into frame ranges and joins the parts by
+stream copy. Then it puts the videos in the latest release with the plates, as
 `<name>.webm` and `captions.txt`.
 
 ## License
