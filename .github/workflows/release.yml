@@ -123,7 +123,7 @@ jobs:
             ffmpeg -v error -xerror -i "$1" -vf "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=$2" -f null -
             awk -F= '/YAVG/ { if (n++) { d = $2 - p; d = d < 0 ? -d : d; m = d > m ? d : m } p = $2 } END { print m + 0 }' "$2"
           }
-          ffmpeg -v error -f lavfi -i "color=c=0x606060:s=64x36:r=60:d=1,drawbox=c=0x404040:t=fill:enable='between(n,30,35)'" \
+          ffmpeg -v error -f lavfi -i "color=c=0x606060:s=128x72:r=60:d=1,drawbox=c=0x404040:t=fill:enable='between(n,30,35)'" \
             -c:v libsvtav1 "$RUNNER_TEMP/dip.webm"
           dip=$(maxdy "$RUNNER_TEMP/dip.webm" "$RUNNER_TEMP/dip.y")
           awk -v d="$dip" 'BEGIN { exit !(d > 1) }' || { echo "control: a 6-frame dip gives max |dY| $dip, not above 1"; exit 1; }
